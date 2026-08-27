@@ -1,0 +1,21 @@
+{
+  "model": {
+    "active_model_path": "models/artifacts/xgb_challenger.joblib",
+    "encoder_path": "models/artifacts/encoder.joblib",
+    "scaler_path": "models/artifacts/scaler.joblib",
+    "previous_model": "models/artifacts/logreg_baseline.joblib",
+    "promotion_notes": "XGBoost promovido sobre la regresion logistica el 2026-08-12: +0.019 AUC-ROC, +0.007 KS, -22% falsos negativos (440 -> 341) y menor costo total bajo los supuestos de negocio declarados abajo, comparando ambos modelos en su propio threshold optimo por costo. Validado primero con 5-fold cross-validation (ganancia consistente en 4/5 folds) antes de promoverlo. Reentrenado el 2026-08-14 sin la variable SEX tras hallazgo de fairness en SHAP (ver FAIRNESS.md) — costo total subio 0.5% (3440 -> 3457) como precio aceptado de eliminar un atributo protegido."
+  },
+  "decision_threshold": {
+    "value": 0.250,
+    "selection_method": "cost_optimal",
+    "chosen_on": "2026-08-14",
+    "notes": "Especifico para xgb_challenger.joblib entrenado SIN SEX — no reutilizar este valor si el modelo activo cambia. Reemplaza este valor y 'chosen_on' cada vez que se re-optimice el threshold. Debe ser leido tanto por evaluacion/entrenamiento como por la API en produccion — nunca hardcodear 0.5 en otro lugar del repo."
+  },
+  "business_cost_assumptions": {
+    "false_negative_cost": 5.0,
+    "false_positive_cost": 1.0,
+    "notes": "Placeholder. Reemplazar con costos reales estimados por el negocio (perdida promedio por default no detectado vs. margen perdido por rechazo erroneo) en cuanto esten disponibles."
+  },
+  "target_column": "default payment_next_month"
+}

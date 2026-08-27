@@ -1,0 +1,43 @@
+{
+  "model": "XGBoost",
+  "params": {
+    "n_estimators": 300,
+    "max_depth": 4,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "eval_metric": "auc",
+    "random_state": 42
+  },
+  "folds": [
+    {
+      "fold": 1,
+      "auc_roc": 0.7858047397208698,
+      "ks_statistic": 0.44105101914507344
+    },
+    {
+      "fold": 2,
+      "auc_roc": 0.7659060023663654,
+      "ks_statistic": 0.4066812007151668
+    },
+    {
+      "fold": 3,
+      "auc_roc": 0.7679504072764205,
+      "ks_statistic": 0.4083615556087006
+    },
+    {
+      "fold": 4,
+      "auc_roc": 0.7736936893643049,
+      "ks_statistic": 0.4319561895033938
+    },
+    {
+      "fold": 5,
+      "auc_roc": 0.7753550959181084,
+      "ks_statistic": 0.4174072511022693
+    }
+  ],
+  "auc_roc_mean": 0.7737419869292138,
+  "auc_roc_std": 0.006972223563846496,
+  "ks_statistic_mean": 0.42109144321492076,
+  "ks_statistic_std": 0.013414214715115133
+}
