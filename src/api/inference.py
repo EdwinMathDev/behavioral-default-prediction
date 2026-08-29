@@ -16,6 +16,18 @@ in production matches what the model actually learned.
 All artifacts and the active model/threshold are read from
 config/model_config.json — this module never hardcodes a model path
 or threshold value.
+
+Note on the SHAP explainer
+---------------------------
+The active model (see model_config.json) is a Logistic Regression,
+not a tree-based model, so `shap.LinearExplainer` is used instead of
+`shap.TreeExplainer`. LinearExplainer needs a background sample to
+estimate the baseline/expected value for a linear model — a small
+sample of the training set is loaded once at startup for this.
+If the active model ever changes back to a tree-based model, this
+explainer choice must change too (TreeExplainer for XGBoost/LightGBM,
+LinearExplainer for linear models, or the generic shap.Explainer
+which auto-detects the model type as a safer default).
 """
 
 import os
@@ -31,7 +43,9 @@ from src.features.build_features import create_features, PAY_DELAY_COLS
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 ARTIFACTS_DIR = "models/artifacts"
+FEATURES_DIR = "data/features"
 CATEGORICAL_COLS = ["EDUCATION", "MARRIAGE", "age_group"]
+SHAP_BACKGROUND_SAMPLE_SIZE = 100
 
 
 class RiskModel:
@@ -50,12 +64,19 @@ class RiskModel:
         self.medians = joblib.load(os.path.join(ARTIFACTS_DIR, "impute_medians.joblib"))
         self.feature_columns = joblib.load(os.path.join(ARTIFACTS_DIR, "feature_columns.joblib"))
 
-        # TreeExplainer se instancia una sola vez — es costoso crearlo
-        # por request, pero explicar UNA fila con uno ya creado es rápido.
-        self.explainer = shap.TreeExplainer(self.model)
+        # LinearExplainer (no TreeExplainer) porque el modelo activo es
+        # una Regresion Logistica — ver nota en el docstring del modulo.
+        # Necesita una muestra de background para estimar el valor base.
+        train_sample = pd.read_csv(
+            os.path.join(FEATURES_DIR, "train_final.csv")
+        ).drop(columns=[self.target_col]).sample(
+            n=SHAP_BACKGROUND_SAMPLE_SIZE, random_state=42
+        )
+        self.explainer = shap.LinearExplainer(self.model, train_sample)
 
         logging.info(f"Modelo cargado: {model_path}")
         logging.info(f"Threshold activo: {self.threshold}")
+        logging.info(f"SHAP explainer: LinearExplainer (background n={SHAP_BACKGROUND_SAMPLE_SIZE})")
 
     def _transform(self, applicant_dict: dict) -> pd.DataFrame:
         # 1. Arma un DataFrame de una fila con las columnas crudas.

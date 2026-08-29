@@ -2,7 +2,7 @@
 app.py
 ======
 
-Streamlit dashboard — Credit Risk Engine.
+Streamlit dashboard — Credit Risk Engine / behavioral-default-prediction.
 
 Responsibility
 --------------
@@ -16,6 +16,12 @@ Provides a visual, non-technical interface on top of the API
        and figures (ROC, confusion matrix, SHAP summary) generated
        during training, so a non-technical stakeholder can see how
        the active model performs without digging through JSON files.
+
+Both views read the active model's identity from
+config/model_config.json — same as src/api/inference.py — instead
+of hardcoding a model name, so this dashboard automatically follows
+whichever model is promoted to production without needing a code
+change here.
 
 Requirement
 -----------
@@ -32,15 +38,22 @@ import requests
 import streamlit as st
 import pandas as pd
 
+from src.utils.config import load_config
+
 API_URL = "http://127.0.0.1:8000/predict"
 API_HEALTH_URL = "http://127.0.0.1:8000/health"
 ARTIFACTS_DIR = "models/artifacts"
 FIGURES_DIR = os.path.join(ARTIFACTS_DIR, "figures")
 
-st.set_page_config(page_title="Credit Risk Engine", layout="wide")
+config = load_config()
+active_model_path = config["model"]["active_model_path"]
+active_model_name = os.path.splitext(os.path.basename(active_model_path))[0]  # ej. "logreg_baseline"
+active_threshold = config["decision_threshold"]["value"]
 
-st.title("💳 Credit Risk Engine")
-st.caption("Modelo XGBoost auditado por fairness — ver FAIRNESS.md")
+st.set_page_config(page_title="Behavioral Default Prediction", layout="wide")
+
+st.title("💳 Behavioral Default Prediction")
+st.caption(f"Modelo activo: {active_model_name} — auditado por fairness, ver FAIRNESS.md")
 
 page = st.sidebar.radio("Vista", ["Scoring en vivo", "Desempeño del modelo"])
 
@@ -143,10 +156,20 @@ if page == "Scoring en vivo":
 # ------------------------------------------------------------------
 else:
     st.header("Desempeño del modelo activo")
+    st.caption(
+        f"Mostrando métricas de **{active_model_name}** (modelo activo según model_config.json) "
+        f"con threshold de decisión = {active_threshold:.3f}"
+    )
 
-    metrics_path = os.path.join(ARTIFACTS_DIR, "xgb_challenger_metrics.json")
+    # Nombres de archivo derivados del modelo activo — nunca hardcodeados,
+    # así esta vista sigue funcionando si el modelo activo cambia de nuevo.
+    metrics_path = os.path.join(ARTIFACTS_DIR, f"{active_model_name}_metrics.json")
     if not os.path.exists(metrics_path):
-        st.warning(f"No se encontró {metrics_path}. Corre `python -m src.models.train_challenger` primero.")
+        st.warning(
+            f"No se encontró {metrics_path}. El modelo activo en model_config.json es "
+            f"'{active_model_name}', pero no tiene un archivo de métricas con ese nombre — "
+            f"revisa que se haya entrenado/evaluado con el nombre esperado."
+        )
         st.stop()
 
     with open(metrics_path) as f:
@@ -161,18 +184,28 @@ else:
     st.divider()
 
     fig_col1, fig_col2 = st.columns(2)
-    roc_path = os.path.join(FIGURES_DIR, "xgb_challenger_roc.png")
-    cm_path = os.path.join(FIGURES_DIR, "xgb_challenger_confusion_matrix.png")
+    roc_path = os.path.join(FIGURES_DIR, f"{active_model_name}_roc.png")
+    cm_path = os.path.join(FIGURES_DIR, f"{active_model_name}_confusion_matrix.png")
     if os.path.exists(roc_path):
         fig_col1.image(roc_path, caption="Curva ROC")
+    else:
+        fig_col1.info(f"No se encontró la figura ROC para {active_model_name}.")
     if os.path.exists(cm_path):
         fig_col2.image(cm_path, caption="Matriz de confusión")
+    else:
+        fig_col2.info(f"No se encontró la matriz de confusión para {active_model_name}.")
 
     st.divider()
     st.subheader("Explicabilidad global (SHAP)")
     shap_path = os.path.join(FIGURES_DIR, "shap_summary_plot.png")
     if os.path.exists(shap_path):
         st.image(shap_path, caption="Impacto de cada variable en la predicción", width=700)
+        st.caption(
+            "⚠️ Este gráfico fue generado con el análisis SHAP original (XGBoost). "
+            "Si el modelo activo cambió a uno lineal, este resumen puede no reflejar "
+            "el comportamiento del modelo actualmente en producción — regenerar con "
+            "src.explainability.explain_model si es necesario."
+        )
     else:
         st.info("Corre `python -m src.explainability.explain_model` para generar este gráfico.")
 
@@ -183,3 +216,8 @@ else:
         "análisis de SHAP (impacto sistemático en la predicción sin aporte real de "
         "desempeño). Ver FAIRNESS.md para el detalle completo del hallazgo y la decisión."
     )
+
+    if "promotion_notes" in config["model"]:
+        st.divider()
+        st.subheader("Historial de selección de modelo")
+        st.caption(config["model"]["promotion_notes"])

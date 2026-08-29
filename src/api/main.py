@@ -2,12 +2,12 @@
 main.py
 =======
 
-FastAPI application — Credit Risk Engine.
+FastAPI application — Credit Risk Engine / behavioral-default-prediction.
 
 Responsibility
 --------------
-Exposes the trained, fairness-audited XGBoost model as an HTTP
-service. The RiskModel (inference.py) is loaded ONCE at startup,
+Exposes the trained, fairness-audited Logistic Regression model as an
+HTTP service. The RiskModel (inference.py) is loaded ONCE at startup,
 not per-request — loading a model and re-fitting an explainer on
 every request would be both slow and wasteful.
 
@@ -33,10 +33,13 @@ from src.api.inference import RiskModel
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 app = FastAPI(
-    title="Credit Risk Engine API",
-    description="Scores credit-default risk for new applicants using an "
-                 "XGBoost model, audited for fairness (see FAIRNESS.md).",
-    version="1.0.0",
+    title="Behavioral Default Prediction API",
+    description="Scores credit-default risk for new applicants using a "
+                 "Logistic Regression model, chosen over an XGBoost challenger "
+                 "after a paired statistical significance test found no reliable "
+                 "performance advantage (see model_config.json promotion_notes). "
+                 "Audited for fairness (see FAIRNESS.md).",
+    version="1.1.0",
 )
 
 # Se carga una sola vez, al iniciar el servidor — no en cada request.
