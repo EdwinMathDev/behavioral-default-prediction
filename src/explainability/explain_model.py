@@ -2,13 +2,13 @@
 explain_model.py
 =================
 
-Model explainability with SHAP — Credit Risk Engine.
+Model explainability with SHAP — Credit Risk Engine / behavioral-default-prediction.
 
 Responsibility
 --------------
-Explains the active model's predictions (currently xgb_challenger,
-read from config/model_config.json — never hardcoded here) at two
-levels:
+Explains the ACTIVE model's predictions (whichever model
+config/model_config.json currently points to — never hardcoded here)
+at two levels:
 
     1. Global: which features drive the model's decisions overall
        (SHAP summary plot, mean |SHAP value| ranking).
@@ -17,20 +17,27 @@ levels:
        "reason code" / adverse-action explanation requires in
        consumer lending.
 
-This is not optional polish. A tree ensemble like XGBoost is not
-self-explanatory the way Logistic Regression coefficients are —
-SHAP is what restores the ability to answer "why was this applicant
-scored this way", both for internal model validation and for
-regulatory/consumer-facing explanations.
+This is not optional polish. Even for an interpretable model like
+Logistic Regression, SHAP gives per-request, per-feature reason
+codes that raw coefficients alone don't provide (coefficients don't
+account for the actual feature values of a specific applicant).
+
+Uses shap.Explainer (the unified, model-agnostic API) instead of
+TreeExplainer/LinearExplainer directly — it auto-detects the right
+algorithm for whatever model is active (LinearExplainer for a linear
+model, TreeExplainer for a tree ensemble, etc.), so this script
+keeps working correctly if the active model changes again later
+without needing a manual code change here.
 
 Pipeline position
 ------------------
-    train_challenger.py -> optimize_threshold_challenger.py -> [explain_model.py] -> API
+    train_baseline.py / train_challenger.py -> optimize_threshold*.py -> [explain_model.py] -> API
 
 Input
 -----
-    models/artifacts/xgb_challenger.joblib  (path read from config)
-    data/features/test_final.csv
+    models/artifacts/<active_model>.joblib  (path read from config)
+    data/features/train_final.csv            (background sample for the explainer)
+    data/features/test_final.csv              (cases to explain)
 
 Output
 ------
@@ -60,58 +67,69 @@ FIGURES_DIR = os.path.join(ARTIFACTS_DIR, "figures")
 # Cuántos casos individuales explicar como ejemplo (uno de cada tipo,
 # para ilustrar distintos patrones de decisión)
 N_EXAMPLE_CASES = 3
+BACKGROUND_SAMPLE_SIZE = 100
 
 
 def load_model_and_data():
     config = load_config()
     model_path = config["model"]["active_model_path"]
     target_col = config["target_column"]
+    model_name = os.path.splitext(os.path.basename(model_path))[0]
 
     model = joblib.load(model_path)
     test = pd.read_csv(os.path.join(FEATURES_DIR, "test_final.csv"))
     X_test = test.drop(columns=[target_col])
     y_test = test[target_col]
 
-    logging.info(f"Modelo cargado desde {model_path}")
-    logging.info(f"Explicando sobre {X_test.shape[0]} casos de test.")
-    return model, X_test, y_test
+    background = pd.read_csv(
+        os.path.join(FEATURES_DIR, "train_final.csv")
+    ).drop(columns=[target_col]).sample(n=BACKGROUND_SAMPLE_SIZE, random_state=42)
+
+    logging.info(f"Modelo cargado desde {model_path} (nombre: {model_name})")
+    logging.info(f"Explicando sobre {X_test.shape[0]} casos de test, "
+                 f"con background de {BACKGROUND_SAMPLE_SIZE} filas de train.")
+    return model, model_name, X_test, y_test, background
 
 
-def compute_shap_values(model, X_test):
-    explainer = shap.TreeExplainer(model)
+def compute_shap_values(model, background, X_test):
+    # shap.Explainer detecta automaticamente el algoritmo correcto segun
+    # el tipo de modelo (LinearExplainer para modelos lineales,
+    # TreeExplainer para ensambles de arboles, etc.) — evita hardcodear
+    # un tipo de explainer especifico que se rompa si el modelo cambia.
+    explainer = shap.Explainer(model, background)
     shap_values = explainer(X_test)
-    logging.info("SHAP values calculados.")
+    logging.info(f"SHAP values calculados con {type(explainer).__name__}.")
     return explainer, shap_values
 
 
-def plot_global_summary(shap_values, X_test):
+def plot_global_summary(shap_values, X_test, model_name: str):
     plt.figure()
     shap.summary_plot(shap_values, X_test, show=False)
     plt.tight_layout()
     path = os.path.join(FIGURES_DIR, "shap_summary_plot.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
-    logging.info(f"SHAP summary plot guardado en {path}")
+    logging.info(f"SHAP summary plot ({model_name}) guardado en {path}")
 
 
-def plot_feature_importance(shap_values, X_test, top_n: int = 15):
+def plot_feature_importance(shap_values, X_test, model_name: str, top_n: int = 15):
     mean_abs_shap = np.abs(shap_values.values).mean(axis=0)
     importance = pd.Series(mean_abs_shap, index=X_test.columns).sort_values(ascending=False)
 
     plt.figure(figsize=(8, 6))
     importance.head(top_n)[::-1].plot(kind="barh")
     plt.xlabel("Mean |SHAP value| (impacto promedio en la predicción)")
-    plt.title(f"Top {top_n} variables más influyentes — XGBoost")
+    plt.title(f"Top {top_n} variables más influyentes — {model_name}")
     plt.tight_layout()
     path = os.path.join(FIGURES_DIR, "shap_feature_importance.png")
     plt.savefig(path, dpi=150)
     plt.close()
-    logging.info(f"SHAP feature importance plot guardado en {path}")
+    logging.info(f"SHAP feature importance plot ({model_name}) guardado en {path}")
 
     return importance
 
 
-def plot_example_cases(explainer, shap_values, X_test, y_test, n_cases: int = N_EXAMPLE_CASES):
+def plot_example_cases(shap_values, X_test, y_test, n_cases: int = N_EXAMPLE_CASES):
     """Explica casos individuales — el equivalente a un 'reason code'
     para un solicitante específico."""
     rng = np.random.default_rng(42)
@@ -131,14 +149,14 @@ def plot_example_cases(explainer, shap_values, X_test, y_test, n_cases: int = N_
 def run():
     os.makedirs(FIGURES_DIR, exist_ok=True)
 
-    model, X_test, y_test = load_model_and_data()
-    explainer, shap_values = compute_shap_values(model, X_test)
+    model, model_name, X_test, y_test, background = load_model_and_data()
+    explainer, shap_values = compute_shap_values(model, background, X_test)
 
-    plot_global_summary(shap_values, X_test)
-    importance = plot_feature_importance(shap_values, X_test)
-    plot_example_cases(explainer, shap_values, X_test, y_test)
+    plot_global_summary(shap_values, X_test, model_name)
+    importance = plot_feature_importance(shap_values, X_test, model_name)
+    plot_example_cases(shap_values, X_test, y_test)
 
-    logging.info("Top 10 variables más influyentes:")
+    logging.info(f"Top 10 variables más influyentes ({model_name}):")
     for feat, val in importance.head(10).items():
         logging.info(f"  {feat}: {val:.4f}")
 
