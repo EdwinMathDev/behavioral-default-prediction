@@ -210,16 +210,17 @@ __marimo__/
 # Data science project custom ignores
 # ============================================
 
-# Ignore raw and processed datasets
-data/raw/*.csv
-data/raw/*.xlsx
-data/raw/*.parquet
-data/processed/*.csv
-data/processed/*.xlsx
-data/processed/*.parquet
-data/features/*.csv
-data/features/*.xlsx
-data/features/*.parquet
+# Ignore raw and processed datasets (recursive — covers subfolders like
+# data/raw/home_credit/, not just files directly inside data/raw/)
+data/raw/**/*.csv
+data/raw/**/*.xlsx
+data/raw/**/*.parquet
+data/processed/**/*.csv
+data/processed/**/*.xlsx
+data/processed/**/*.parquet
+data/features/**/*.csv
+data/features/**/*.xlsx
+data/features/**/*.parquet
 
 # Ignore Jupyter notebook checkpoints
 .ipynb_checkpoints/
@@ -236,3 +237,4 @@ models/*.joblib
 # .gitignore
 models/artifacts/*.joblib
 models/artifacts/*.pkl
+
