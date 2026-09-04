@@ -1,0 +1,20 @@
+{
+  "model": {
+    "active_model_path": "models/artifacts/xgb_challenger_v2.joblib",
+    "previous_model": "models/artifacts/logreg_baseline_v2.joblib",
+    "promotion_notes": "PROMOTED on 2026-09-03: XGBoost challenger tested against the Logistic Regression baseline using a paired t-test over the SAME 5 StratifiedKFold folds (random_state=42, identical between cross_validate_baseline_v2.py and cross_validate_challenger_v2.py) \u00e2\u20ac\u201d the same rigorous method used in v1, which in v1's case led to REJECTING XGBoost. Here the result is the opposite: XGBoost wins in 5/5 folds consistently (AUC diff ranging +0.0065 to +0.0105 across folds, no fold where it loses), with AUC +0.0084 (p=0.0002) and KS +0.0144 (p=0.0005) \u00e2\u20ac\u201d both comfortably below the 0.05 significance threshold. This closes most of the performance gap between v2 and v1 (v1 baseline AUC=0.7664 vs v2 XGBoost AUC=0.7636, vs v2 Logistic Regression AUC=0.7551). Promoting XGBoost as the v2 production model on this evidence. Interpretability is reduced versus the Logistic Regression baseline, but SHAP-based explainability (see explain_model equivalent for v2, once built) restores per-request reason codes, same approach as v1's xgb_challenger before its own reversal."
+  },
+  "decision_threshold": {
+    "value": 0.7000000000000001,
+    "selection_method": "cost_optimal",
+    "chosen_on": "2026-09-03",
+    "notes": "Chosen using out-of-fold predictions (data/features/xgb_challenger_v2_oof_predictions.csv) \u2014 test_final_v2.csv touched only once for final evaluation, never for threshold selection. Specific to xgb_challenger_v2; re-run this script if the active model changes."
+  },
+  "business_cost_assumptions": {
+    "false_negative_cost": 5.0,
+    "false_positive_cost": 1.0,
+    "notes": "Placeholder, same ratio used in v1 and v2's Logistic Regression threshold optimization. Replace with real estimated costs when available."
+  },
+  "target_column": "TARGET",
+  "oof_predictions_path": "data/features/xgb_challenger_v2_oof_predictions.csv"
+}
