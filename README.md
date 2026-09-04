@@ -243,16 +243,43 @@ python -m pytest -v
       sync with its own schema), re-decide the active model with a
       proper statistical test, fix a threshold-selection leakage, and
       ship a working API + dashboard.
-- [ ] **v2** — migrate to the Home Credit Default Risk dataset
-      (bureau history, prior loans, installment-level payment
-      behavior across multiple products), which is where this
-      project's name — *behavioral* — actually gets earned. This work
-      happens on a separate branch so `main` always reflects a working
-      v1.
+- [x] **v2 (exploration + modeling complete)** — migrated to the Home
+      Credit Default Risk dataset (bureau history, prior loans,
+      installment-level payment behavior, credit card balances across
+      5 relational tables). Work happened on a separate `v2-home-credit`
+      branch so `main` always reflects a working v1.
 
----
-
-*Built on a pipeline that had been paused for months, resumed and
-re-audited stage by stage — which is, if anything, a more faithful
-account of how real projects get built than a repository that only
-shows the final state.*
+      **v2 findings, in brief:**
+      - EDA across all 5 tables found genuine behavioral signal with
+        clear dose-response patterns: `PCT_INSTALLMENTS_LATE` (+66%
+        relative default rate from lowest to highest tercile) and
+        `CC_AVG_UTILIZATION` (+183% relative, the strongest signal found).
+      - A Logistic Regression baseline (v2) scored lower than v1's
+        (AUC 0.7551 vs. 0.7664, 5-fold CV) despite the richer data —
+        traced to Home Credit's more extreme class imbalance (8% vs.
+        22% default rate in v1's dataset), not to wasted feature signal
+        (confirmed via coefficient inspection).
+      - An XGBoost challenger *did* show a statistically significant
+        improvement over the v2 baseline this time (unlike v1, where the
+        same test led to rejecting XGBoost) — paired t-test AUC +0.0084
+        (p=0.0002), winning in 5/5 folds. Promoted to v2 production per
+        `config/model_config_v2.json`.
+      - `CODE_GENDER` was audited the same way `SEX` was in v1
+        (evidence-first, not excluded by default) and removed after an
+        ablation showed negligible performance cost (+0.0018 AUC).
+      - **Honesty check that matters most**: SHAP showed `EXT_SOURCE_1/2/3`
+        — precomputed external scores present in the raw data, not
+        features this project engineered — dominating feature
+        importance. An ablation confirmed they alone are worth +0.0507
+        AUC; without them, v2 (0.7144) falls clearly *below* v1 (0.7664,
+        -0.0520). The "v2 nearly closes the gap with v1" headline number
+        depends mostly on precomputed external scores, not on this
+        project's own multi-table behavioral feature engineering. That
+        engineering is real and individually validated (see the EDA
+        findings above), but it is a secondary contributor to the
+        model's overall performance, not the primary one. Full
+        accounting in `config/model_config_v2.json`'s `promotion_notes`.
+- [ ] **v2 (deployment parity)** — API + dashboard for the v2 model,
+      matching v1's. Not yet built; v2 currently exists as a validated
+      modeling pipeline (`src/features/build_features_v2.py` through
+      `src/explainability/explain_model_v2.py`) without a serving layer.
