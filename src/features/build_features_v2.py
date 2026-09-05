@@ -67,7 +67,7 @@ FEATURES_DIR = "data/features"
 # are deliberately excluded rather than imputed away silently.
 APPLICATION_BASE_COLUMNS = [
     "SK_ID_CURR", "TARGET",
-    "NAME_CONTRACT_TYPE", "FLAG_OWN_CAR", "FLAG_OWN_REALTY",
+    "NAME_CONTRACT_TYPE", "FLAG_OWN_CAR", "FLAG_OWN_REALTY",  # CODE_GENDER excluded — see FAIRNESS.md (v2)
     "CNT_CHILDREN", "AMT_INCOME_TOTAL", "AMT_CREDIT", "AMT_ANNUITY", "AMT_GOODS_PRICE",
     "NAME_INCOME_TYPE", "NAME_EDUCATION_TYPE", "NAME_FAMILY_STATUS", "NAME_HOUSING_TYPE",
     "OCCUPATION_TYPE", "CNT_FAM_MEMBERS",
@@ -78,9 +78,15 @@ APPLICATION_BASE_COLUMNS = [
 DAYS_EMPLOYED_ANOMALY = 365243
 
 
-def load_application(train: bool = True) -> pd.DataFrame:
-    filename = "application_train.csv" if train else "application_test.csv"
-    df = pd.read_csv(os.path.join(RAW_DIR, filename))
+def load_application(train: bool = True, df: pd.DataFrame = None) -> pd.DataFrame:
+    """If df is provided, it is used directly (for testing with synthetic
+    data) instead of reading from disk — production behavior (train=True/False
+    picking the file) is unchanged when df is None."""
+    if df is None:
+        filename = "application_train.csv" if train else "application_test.csv"
+        df = pd.read_csv(os.path.join(RAW_DIR, filename))
+    else:
+        df = df.copy()
 
     available_cols = [c for c in APPLICATION_BASE_COLUMNS if c in df.columns]
     df = df[available_cols].copy()
@@ -95,13 +101,19 @@ def load_application(train: bool = True) -> pd.DataFrame:
     )
     df = df.drop(columns=["DAYS_BIRTH", "DAYS_EMPLOYED"])
 
-    logging.info(f"Loaded {filename}: {df.shape[0]:,} rows, {df.shape[1]} columns.")
+    source_desc = filename if "filename" in dir() else "injected DataFrame"
+    logging.info(f"Loaded {source_desc}: {df.shape[0]:,} rows, {df.shape[1]} columns.")
     return df
 
 
-def aggregate_bureau() -> pd.DataFrame:
-    bureau_cols = ["SK_ID_CURR", "SK_ID_BUREAU", "CREDIT_ACTIVE", "CREDIT_DAY_OVERDUE", "AMT_CREDIT_SUM_DEBT"]
-    bureau = pd.read_csv(os.path.join(RAW_DIR, "bureau.csv"), usecols=bureau_cols)
+def aggregate_bureau(df: pd.DataFrame = None) -> pd.DataFrame:
+    """If df is provided, it is used directly (for testing) instead of
+    reading bureau.csv from disk."""
+    if df is None:
+        bureau_cols = ["SK_ID_CURR", "SK_ID_BUREAU", "CREDIT_ACTIVE", "CREDIT_DAY_OVERDUE", "AMT_CREDIT_SUM_DEBT"]
+        bureau = pd.read_csv(os.path.join(RAW_DIR, "bureau.csv"), usecols=bureau_cols)
+    else:
+        bureau = df.copy()
 
     summary = bureau.groupby("SK_ID_CURR").agg(
         BUREAU_COUNT=("SK_ID_BUREAU", "count"),
@@ -123,9 +135,14 @@ def aggregate_bureau() -> pd.DataFrame:
     return summary
 
 
-def aggregate_previous_application() -> pd.DataFrame:
-    prev_cols = ["SK_ID_CURR", "SK_ID_PREV", "NAME_CONTRACT_STATUS"]
-    prev = pd.read_csv(os.path.join(RAW_DIR, "previous_application.csv"), usecols=prev_cols)
+def aggregate_previous_application(df: pd.DataFrame = None) -> pd.DataFrame:
+    """If df is provided, it is used directly (for testing) instead of
+    reading previous_application.csv from disk."""
+    if df is None:
+        prev_cols = ["SK_ID_CURR", "SK_ID_PREV", "NAME_CONTRACT_STATUS"]
+        prev = pd.read_csv(os.path.join(RAW_DIR, "previous_application.csv"), usecols=prev_cols)
+    else:
+        prev = df.copy()
 
     summary = prev.groupby("SK_ID_CURR").agg(
         PREV_APP_COUNT=("SK_ID_PREV", "count"),
@@ -144,9 +161,14 @@ def aggregate_previous_application() -> pd.DataFrame:
     return summary
 
 
-def aggregate_installments() -> pd.DataFrame:
-    installments_cols = ["SK_ID_CURR", "DAYS_INSTALMENT", "DAYS_ENTRY_PAYMENT", "AMT_INSTALMENT", "AMT_PAYMENT"]
-    installments = pd.read_csv(os.path.join(RAW_DIR, "installments_payments.csv"), usecols=installments_cols)
+def aggregate_installments(df: pd.DataFrame = None) -> pd.DataFrame:
+    """If df is provided, it is used directly (for testing) instead of
+    reading installments_payments.csv from disk."""
+    if df is None:
+        installments_cols = ["SK_ID_CURR", "DAYS_INSTALMENT", "DAYS_ENTRY_PAYMENT", "AMT_INSTALMENT", "AMT_PAYMENT"]
+        installments = pd.read_csv(os.path.join(RAW_DIR, "installments_payments.csv"), usecols=installments_cols)
+    else:
+        installments = df.copy()
 
     # Only rows with an actual recorded payment carry a meaningful
     # DAYS_LATE / shortfall — see notebooks/05_eda_installments_payments.ipynb section 3
@@ -184,9 +206,14 @@ def aggregate_installments() -> pd.DataFrame:
     return summary
 
 
-def aggregate_credit_card_balance() -> pd.DataFrame:
-    cc_cols = ["SK_ID_CURR", "AMT_BALANCE", "AMT_CREDIT_LIMIT_ACTUAL", "SK_DPD"]
-    cc = pd.read_csv(os.path.join(RAW_DIR, "credit_card_balance.csv"), usecols=cc_cols)
+def aggregate_credit_card_balance(df: pd.DataFrame = None) -> pd.DataFrame:
+    """If df is provided, it is used directly (for testing) instead of
+    reading credit_card_balance.csv from disk."""
+    if df is None:
+        cc_cols = ["SK_ID_CURR", "AMT_BALANCE", "AMT_CREDIT_LIMIT_ACTUAL", "SK_DPD"]
+        cc = pd.read_csv(os.path.join(RAW_DIR, "credit_card_balance.csv"), usecols=cc_cols)
+    else:
+        cc = df.copy()
 
     cc["UTILIZATION"] = np.where(
         cc["AMT_CREDIT_LIMIT_ACTUAL"] > 0,
