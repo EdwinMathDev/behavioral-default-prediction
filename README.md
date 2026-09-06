@@ -29,10 +29,10 @@ default-prediction system. **In production on `main`.**
 **v2** — migrated to the Home Credit Default Risk dataset, which has
 real multi-table behavioral history (bureau records, prior loans,
 installment payment behavior, credit card balances) — the kind of data
-this project's name actually promises. Modeling is complete on the
-`v2-home-credit` branch (see [Roadmap](#roadmap) for the full,
-including-the-uncomfortable-parts writeup); a serving layer (API +
-dashboard) has not been built yet.
+this project's name actually promises. Modeling, fairness, testing, and
+deployment are all complete on the `v2-home-credit` branch (see
+[Roadmap](#roadmap) for the full, including-the-uncomfortable-parts
+writeup).
 
 | Metric / Feature | v1 (Taiwan, `main`) | v2 (Home Credit, `v2-home-credit`) |
 |---|---|---|
@@ -41,6 +41,7 @@ dashboard) has not been built yet.
 | **KS statistic** | 0.397 (single split) · 0.413 ± 0.009 (5-fold CV) | 0.397 (single split) · 0.397 ± 0.007 (5-fold CV) |
 | **Decision threshold** | 0.410 (cost-optimal, from OOF predictions) | 0.700 (cost-optimal, from OOF predictions) |
 | **Fairness** | `SEX` excluded — see [`FAIRNESS.md`](FAIRNESS.md) | `CODE_GENDER` excluded — same method, see Roadmap |
+| **Deployment** | API + dashboard, form-based input | API + dashboard, lookup by existing client ID (see why below) |
 | **Honesty caveat** | XGBoost promotion reversed — no significant edge over Logistic Regression (see below) | Most of the AUC edge over v1 traces to precomputed external scores (`EXT_SOURCE_*`), not this project's own feature engineering — see [Roadmap](#roadmap) |
 
 ---
@@ -73,6 +74,11 @@ and loss of interpretability of XGBoost isn't justified. **The
 promotion was reversed**, and the reasoning for the reversal is
 recorded in full in `model_config.json`, right next to the original
 promotion notes it replaces — nothing was quietly deleted.
+
+Interestingly, the *same* test run on v2's genuinely different dataset
+found the opposite result — see [Roadmap](#roadmap). The point was
+never "always prefer the simple model"; it's "let the paired test
+decide, every time."
 
 ## Choosing the decision threshold without cheating (v1)
 
@@ -195,10 +201,15 @@ train_baseline_v2.py / train_challenger_v2.py   final models, persisted
    │
    ▼
 config/model_config_v2.json   single source of truth: active model,
-                               threshold, cost assumptions, full promotion
-                               history including the EXT_SOURCE finding
-
-(No API/dashboard yet for v2 — see Roadmap.)
+   │                          threshold, cost assumptions, full promotion
+   │                          history including the EXT_SOURCE and CODE_GENDER findings
+   ▼
+src/api/main_v2.py (FastAPI)   ◄──────  models/artifacts/*.joblib,
+   │                                    data/features/home_credit_features.csv
+   │                                    (acts as a precomputed feature store)
+   ▼
+dashboard/app_v2.py (Streamlit)   reads the same config — never hardcodes
+                                  which model is "active"
 ```
 
 Same discipline as v1 in both pipelines: every stage that fits
@@ -230,13 +241,18 @@ src/
                   fairness_check_gender_v2.py, ablation_check_ext_source_v2.py    (v2)
   explainability/ explain_model.py                        (v1)
                   explain_model_v2.py                       (v2)
-  api/            FastAPI app (schemas, inference, main)   (v1 only, so far)
+  api/            schemas.py, inference.py, main.py         (v1)
+                  schemas_v2.py, inference_v2.py, main_v2.py (v2)
   utils/          config.py, metrics.py                    (shared)
-dashboard/        app.py (Streamlit)                       (v1 only, so far)
+dashboard/        app.py                                    (v1, Streamlit)
+                  app_v2.py                                  (v2, Streamlit)
 notebooks/        01_eda.ipynb                              (v1)
                   02_eda_home_credit.ipynb through
                   06_eda_credit_card_balance.ipynb           (v2, one per table)
-test/             pytest suite                              (v1)
+test/             test_api_schema.py, test_build_features.py,
+                  test_config.py, test_fairness_no_protected_attributes.py    (v1, 20 tests)
+                  test_api_v2.py, test_build_features_v2.py,
+                  test_config_v2.py, test_fairness_no_protected_attributes_v2.py  (v2, 26 tests)
 data/raw/home_credit/   5 raw Home Credit CSVs (gitignored — not versioned)
 models/artifacts/ trained models, encoders, scalers, figures, reports (both versions)
 FAIRNESS.md       fairness finding and decision log (v1; v2's CODE_GENDER
@@ -307,6 +323,8 @@ python -m pytest -v
 > Credit CSVs in `data/raw/home_credit/` (downloaded separately from
 > Kaggle — see the competition's data page; not included in this repo).
 
+### 1. Rebuild the pipeline from raw data
+
 ```bash
 python -m src.features.build_features_v2
 python -m src.models.train_pipeline_v2
@@ -325,8 +343,37 @@ python check_ext_source_missingness.py
 
 Each step reads the previous step's output and writes its own to
 `data/` or `models/artifacts/`; none of them mutate shared state, so
-the sequence can be re-run in full at any time. No API/dashboard yet —
-see [Roadmap](#roadmap).
+the sequence can be re-run in full at any time.
+
+### 2. Serve the model
+
+```bash
+uvicorn src.api.main_v2:app --reload --port 8001
+```
+Interactive docs at `http://127.0.0.1:8001/docs`. Port 8001, not 8000
+— so v1's API can run alongside it if needed.
+
+### 3. Dashboard
+
+With the API running, in a second terminal:
+```bash
+streamlit run dashboard/app_v2.py --server.port 8502
+```
+
+> **Note:** v2 scores an *existing* client by `SK_ID_CURR`
+> (`GET /predict/{sk_id_curr}`), not a submitted form. Its behavioral
+> features (bureau history, installment lateness, credit card
+> utilization) are aggregates over 4 large relational tables that
+> can't be computed live from a request body — in a real system they'd
+> come from a feature store keyed by client ID, which is exactly what
+> `data/features/home_credit_features.csv` simulates here. See
+> `src/api/inference_v2.py`'s docstring for the full reasoning.
+
+### 4. Tests
+
+```bash
+python -m pytest -v
+```
 
 ---
 
@@ -368,25 +415,30 @@ see [Roadmap](#roadmap).
       - **Honesty check that matters most**: SHAP showed `EXT_SOURCE_1/2/3`
         — precomputed external scores present in the raw data, not
         features this project engineered — dominating feature
-        importance by a wide margin. An ablation confirmed they alone
-        are worth +0.0507 AUC; without them, v2 (0.7144) falls clearly
-        *below* v1 (0.7664, -0.0520). A follow-up availability check
-        found no production-risk case for removing them anyway
-        (`EXT_SOURCE_2` missing only 0.2% of the time; only 0.06% of
-        clients lack all three, with no meaningful default-rate
-        difference), so they remain in the production model — but the
-        honest accounting is that the "v2 nearly closes the gap with
-        v1" headline number depends mostly on precomputed external
-        scores, not on this project's own multi-table behavioral
-        feature engineering. That engineering is real and individually
-        validated (see the dose-response findings above), but it is a
-        secondary contributor to the model's overall performance, not
-        the primary one. Full accounting in
-        `config/model_config_v2.json`'s `promotion_notes`.
-- [ ] **v2 (deployment parity)** — API + dashboard for the v2 model,
-      matching v1's. Not yet built; v2 currently exists as a validated
-      modeling pipeline (`src/features/build_features_v2.py` through
-      `src/explainability/explain_model_v2.py`) without a serving layer.
+        importance by a wide margin, both globally and on individual
+        predictions served through the live API. An ablation confirmed
+        they alone are worth +0.0507 AUC; without them, v2 (0.7144)
+        falls clearly *below* v1 (0.7664, -0.0520). A follow-up
+        availability check found no production-risk case for removing
+        them anyway (`EXT_SOURCE_2` missing only 0.2% of the time; only
+        0.06% of clients lack all three, with no meaningful
+        default-rate difference), so they remain in the production
+        model — but the honest accounting is that the "v2 nearly
+        closes the gap with v1" headline number depends mostly on
+        precomputed external scores, not on this project's own
+        multi-table behavioral feature engineering. That engineering
+        is real and individually validated (see the dose-response
+        findings above), but it is a secondary contributor to the
+        model's overall performance, not the primary one. Full
+        accounting in `config/model_config_v2.json`'s `promotion_notes`.
+- [x] **v2 (deployment parity)** — API + dashboard for the v2 model,
+      matching v1's. Scores existing clients by `SK_ID_CURR` (looked up
+      from a precomputed feature store) rather than accepting raw form
+      fields, since v2's behavioral features are aggregates over 4
+      large relational tables that can't be computed live per request
+      — see `src/api/inference_v2.py`'s docstring for the full
+      reasoning. Covered by `test/test_api_v2.py`, run against a real
+      FastAPI `TestClient`.
 
 ---
 
