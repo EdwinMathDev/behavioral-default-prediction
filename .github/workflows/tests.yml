@@ -1,0 +1,52 @@
+# .github/workflows/tests.yml
+#
+# Runs the pytest suite on every push and pull request to main and
+# v2-home-credit. Tests that need locally-generated artifacts (trained
+# models, raw datasets — see .gitignore) are skipped automatically by
+# test/conftest.py, since those files aren't committed to this repo.
+# This workflow validates code correctness (feature-engineering logic,
+# schema contracts, fairness guards on the columns available) on every
+# push, without needing Kaggle credentials or a multi-minute training run
+# in CI.
+
+name: Tests
+
+on:
+  push:
+    branches: [main, v2-home-credit]
+  pull_request:
+    branches: [main, v2-home-credit]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run test suite
+        run: python -m pytest -v
+
+      - name: Summarize skipped tests
+        if: always()
+        run: |
+          echo "Note: tests requiring locally-trained models or raw datasets"
+          echo "are skipped in CI by design (see test/conftest.py) -- those"
+          echo "files are gitignored (size, and in v2's case, Kaggle's"
+          echo "redistribution terms). Run the pipeline locally to exercise"
+          echo "them for real; see README 'Running it' sections."
