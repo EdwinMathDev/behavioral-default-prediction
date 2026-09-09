@@ -47,6 +47,23 @@ the mechanism with data already on hand, and should show LOW drift (it's
 a random split of the same population, not genuinely new data). A
 meaningfully non-zero PSI here would itself be worth investigating.
 
+CRITICAL CAVEAT for v1 specifically: v1's train_final.csv is the output of
+train_pipeline.py's SMOTE step (X_train_bal), NOT the real, unmodified
+training population -- it contains synthetic minority-class rows created
+by linear interpolation between neighbors. Comparing it as a drift
+"reference" against real data (like test_final.csv) will show spurious,
+large PSI values on any feature SMOTE touched, especially ordinal/discrete
+ones (interpolating a discrete variable like PAY_0 produces thousands of
+fractional values that never existed in reality) -- this is a reference-data
+artifact, not genuine population drift. NEVER use train_final.csv as the
+--reference for v1. Use test_final.csv (real, held-out data representative
+of the population the model was trained on) as --reference instead, and
+compare it against a genuinely new batch of scoring data when one becomes
+available. v2's train_final_v2.csv does NOT have this problem -- v2's
+pipeline deliberately avoids SMOTE (class_weight/scale_pos_weight instead,
+a lesson carried over specifically because of this kind of issue), so it
+is safe to use as a --reference as-is.
+
 Output
 ------
     A printed report, plus a JSON file with full per-feature PSI values,
@@ -82,18 +99,12 @@ def calculate_psi(reference: np.ndarray, current: np.ndarray, n_bins: int = N_BI
     if len(reference) == 0 or len(current) == 0:
         return np.nan
 
-    # Quantile-based bins from the reference distribution. Constant/near-constant
-    # columns can collapse bin edges — duplicates="drop" handles that gracefully.
     try:
         bin_edges = np.unique(np.quantile(reference, np.linspace(0, 1, n_bins + 1)))
     except Exception:
         return np.nan
 
     if len(bin_edges) < 3:
-        # Not enough distinct values to form meaningful bins (e.g. a
-        # near-constant or binary column) -- PSI isn't a meaningful
-        # measure here; the caller should rely on a simple mean/rate
-        # comparison for such columns instead.
         return np.nan
 
     bin_edges[0] = -np.inf
@@ -105,9 +116,6 @@ def calculate_psi(reference: np.ndarray, current: np.ndarray, n_bins: int = N_BI
     ref_pct = ref_counts / max(len(reference), 1)
     cur_pct = cur_counts / max(len(current), 1)
 
-    # Avoid log(0) / division by zero for empty bins -- a tiny epsilon is
-    # standard practice for PSI, since a truly empty bin still represents
-    # a real (large) shift that shouldn't be silently ignored.
     epsilon = 1e-4
     ref_pct = np.where(ref_pct == 0, epsilon, ref_pct)
     cur_pct = np.where(cur_pct == 0, epsilon, cur_pct)
@@ -204,7 +212,6 @@ if __name__ == "__main__":
 
     target_col = args.target_col
     if target_col is None:
-        # Auto-detect based on which of the two known target column names is present.
         probe = pd.read_csv(args.reference, nrows=1)
         if "TARGET" in probe.columns:
             target_col = "TARGET"
