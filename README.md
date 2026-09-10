@@ -1,129 +1,62 @@
 # Behavioral Default Prediction
 
-A credit-default scoring system built around a simple premise: a model
-is not finished when it achieves a good AUC. It is finished when its
-predictions are reproducible, its decisions are explainable, its
-threshold reflects the economics of the business it serves, and every
-promotion decision — including "we should use the more complex
-model" — is backed by a statistical test, not by which number looked
-bigger.
+A credit-default scoring system built around a simple premise: a model is not finished when it achieves a good AUC. It is finished when its predictions are reproducible, its decisions are explainable, its threshold reflects the economics of the business it serves, and every promotion decision, including "we should use the more complex model," is backed by a statistical test, not by which number looked bigger.
 
-This repository documents that process end to end, including the
-points where an earlier version of the pipeline was wrong, the point
-where a previously-documented decision was formally reversed after
-being re-examined with more rigor, and the point where a second
-model's apparent edge turned out to depend mostly on data this project
-didn't actually build.
+This repository documents that process end to end, including the points where an earlier version of the pipeline was wrong, the point where a previously-documented decision was formally reversed after being re-examined with more rigor, and the point where a second model's apparent edge turned out to depend mostly on data this project didn't actually build.
 
 ---
 
 ## What this is
 
-**v1** — a model that predicts the probability that a credit-card
-holder will default on payment in the following month, built on the
-UCI *Default of Credit Card Clients* dataset (Taiwan) — inherited from
-an earlier project, [`credit-risk-engine`](https://github.com/EdwinMathDev),
-and re-purposed here as the foundation for a genuinely *behavioral*
-default-prediction system. **In production on `main`.**
+**v1**, a model that predicts the probability that a credit-card holder will default on payment in the following month, built on the UCI *Default of Credit Card Clients* dataset (Taiwan), inherited from an earlier project, [`credit-risk-engine`](https://github.com/EdwinMathDev), and re-purposed here as the foundation for a genuinely *behavioral* default-prediction system. **In production on `main`.**
 
-**v2** — migrated to the Home Credit Default Risk dataset, which has
-real multi-table behavioral history (bureau records, prior loans,
-installment payment behavior, credit card balances) — the kind of data
-this project's name actually promises. Modeling, fairness, testing, and
-deployment are all complete on the `v2-home-credit` branch (see
-[Roadmap](#roadmap) for the full, including-the-uncomfortable-parts
-writeup).
+**v2**, migrated to the Home Credit Default Risk dataset, which has real multi-table behavioral history (bureau records, prior loans, installment payment behavior, credit card balances), the kind of data this project's name actually promises. Modeling, fairness, testing, and deployment are all complete on the `v2-home-credit` branch (see [Roadmap](#roadmap) for the full, including-the-uncomfortable-parts writeup).
 
 | Metric / Feature | v1 (Taiwan, `main`) | v2 (Home Credit, `v2-home-credit`) |
 |---|---|---|
 | **Active model** | Logistic Regression | XGBoost |
-| **AUC-ROC** | 0.752 (single split) · 0.766 ± 0.006 (5-fold CV) | 0.765 (single split) · 0.764 ± 0.004 (5-fold CV) |
-| **KS statistic** | 0.397 (single split) · 0.413 ± 0.009 (5-fold CV) | 0.397 (single split) · 0.397 ± 0.007 (5-fold CV) |
+| **AUC-ROC** | 0.752 (single split), 0.766 ± 0.006 (5-fold CV) | 0.765 (single split), 0.764 ± 0.004 (5-fold CV) |
+| **KS statistic** | 0.397 (single split), 0.413 ± 0.009 (5-fold CV) | 0.397 (single split), 0.397 ± 0.007 (5-fold CV) |
 | **Decision threshold** | 0.410 (cost-optimal, from OOF predictions) | 0.700 (cost-optimal, from OOF predictions) |
-| **Fairness** | `SEX` excluded — see [`FAIRNESS.md`](FAIRNESS.md) | `CODE_GENDER` excluded — same method, see Roadmap |
+| **Fairness** | `SEX` excluded, see [`FAIRNESS.md`](FAIRNESS.md) | `CODE_GENDER` excluded, same method, see Roadmap |
 | **Deployment** | API + dashboard, form-based input | API + dashboard, lookup by existing client ID (see why below) |
-| **Honesty caveat** | XGBoost promotion reversed — no significant edge over Logistic Regression (see below) | Most of the AUC edge over v1 traces to precomputed external scores (`EXT_SOURCE_*`), not this project's own feature engineering — see [Roadmap](#roadmap) |
+| **Monitoring** | PSI-based drift check (`check_data_drift.py`), CI runs the test suite on every push | Same tooling, shared across both versions |
+| **Honesty caveat** | XGBoost promotion reversed, no significant edge over Logistic Regression (see below) | Most of the AUC edge over v1 traces to precomputed external scores (`EXT_SOURCE_*`), not this project's own feature engineering, see [Roadmap](#roadmap) |
 
 ---
 
 ## Why Logistic Regression, and not XGBoost (v1)
 
-An XGBoost challenger was originally promoted over the Logistic
-Regression baseline (documented history in
-`config/model_config.json → model.promotion_notes`), on the basis of a
-5-fold CV showing "improvement in 4 of 5 folds." That is a real
-observation, but it is not the same thing as a statistically
-significant difference.
+An XGBoost challenger was originally promoted over the Logistic Regression baseline (documented history in `config/model_config.json → model.promotion_notes`), on the basis of a 5-fold CV showing "improvement in 4 of 5 folds." That is a real observation, but it is not the same thing as a statistically significant difference.
 
-Because both models were cross-validated on the *exact same* 5 folds
-(`StratifiedKFold(random_state=42)`, shared between
-`cross_validate_baseline.py` and `cross_validate_challenger.py`), the
-comparison could be — and was — redone properly as a **paired t-test**
-over the per-fold differences (`compare_baseline_vs_challenger.py`):
+Because both models were cross-validated on the *exact same* 5 folds (`StratifiedKFold(random_state=42)`, shared between `cross_validate_baseline.py` and `cross_validate_challenger.py`), the comparison could be, and was, redone properly as a **paired t-test** over the per-fold differences (`compare_baseline_vs_challenger.py`):
 
 | Metric | Baseline (LogReg) | Challenger (XGBoost) | Diff | p-value | Significant at 5%? |
 |---|---|---|---|---|---|
 | AUC-ROC | 0.7664 | 0.7727 | +0.0062 | 0.0609 | No |
 | KS statistic | 0.4127 | 0.4173 | +0.0046 | 0.3237 | No |
 
-Neither difference clears the conventional significance threshold —
-and in one of the five folds, XGBoost actually performed *worse* than
-the baseline, which a simple average of "4 of 5 folds" obscures. With
-no statistically defensible performance gain, the added complexity
-and loss of interpretability of XGBoost isn't justified. **The
-promotion was reversed**, and the reasoning for the reversal is
-recorded in full in `model_config.json`, right next to the original
-promotion notes it replaces — nothing was quietly deleted.
+Neither difference clears the conventional significance threshold, and in one of the five folds, XGBoost actually performed *worse* than the baseline, something a simple average of "4 of 5 folds" obscures. With no statistically defensible performance gain, the added complexity and loss of interpretability of XGBoost isn't justified. **The promotion was reversed**, and the reasoning for the reversal is recorded in full in `model_config.json`, right next to the original promotion notes it replaces. Nothing was quietly deleted.
 
-Interestingly, the *same* test run on v2's genuinely different dataset
-found the opposite result — see [Roadmap](#roadmap). The point was
-never "always prefer the simple model"; it's "let the paired test
-decide, every time."
+The same test run on v2's genuinely different dataset found the opposite result, see below. The point was never "always prefer the simple model," it's "let the paired test decide, every time."
 
 ## Choosing the decision threshold without cheating (v1)
 
-The original threshold-optimization script chose its cutoff *and*
-reported final metrics on the same test set — a subtle leakage that
-optimistically biases the reported numbers toward that one split.
-This was fixed (`generate_oof_predictions.py` +
-`optimize_threshold_v2.py`): the threshold is selected using
-out-of-fold predictions (each row scored by a model that never saw it
-in training), and `test_final.csv` is touched exactly once, only to
-report how the already-decided threshold performs.
+The original threshold-optimization script chose its cutoff *and* reported final metrics on the same test set, a subtle leakage that optimistically biases the reported numbers toward that one split. This was fixed (`generate_oof_predictions.py` + `optimize_threshold_v2.py`): the threshold is selected using out-of-fold predictions (each row scored by a model that never saw it in training), and `test_final.csv` is touched exactly once, only to report how the already-decided threshold performs.
 
-The threshold itself (0.410) reflects an explicit, documented cost
-assumption — missing a real default is assumed to cost 5× more than
-wrongly flagging a good client (`business_cost_assumptions` in
-`model_config.json`) — not the arbitrary default of 0.5. v2 uses the
-same OOF-based method and the same cost ratio (`optimize_threshold_v2_active.py`),
-arriving at a different threshold (0.700) because Home Credit's more
-extreme class imbalance shifts where that cost minimum sits.
+The threshold itself (0.410) reflects an explicit, documented cost assumption: missing a real default is assumed to cost 5x more than wrongly flagging a good client (`business_cost_assumptions` in `model_config.json`), not the arbitrary default of 0.5. v2 uses the same OOF-based method and the same cost ratio (`optimize_threshold_v2_active.py`), arriving at a different threshold (0.700) because Home Credit's more extreme class imbalance shifts where that cost minimum sits.
 
 ## A finding worth stating plainly (v1)
 
-`SEX` was excluded from the feature set upstream, in
-`build_features.py`, following the fairness ablation documented in
-[`FAIRNESS.md`](FAIRNESS.md): a SHAP-based finding that the variable
-had a systematic, non-negligible effect on predicted risk with no
-performance justification for keeping it. Because it never enters
-`build_features.py`'s `BASE_COLUMNS`, it cannot silently re-appear
-downstream — anyone attempting to re-add it as a feature would need to
-touch that file directly, and would need to justify the fairness
-implications explicitly at that point, not have them buried in a
-config flag elsewhere.
+`SEX` was excluded from the feature set upstream, in `build_features.py`, following the fairness ablation documented in [`FAIRNESS.md`](FAIRNESS.md): a SHAP-based finding that the variable had a systematic, non-negligible effect on predicted risk with no performance justification for keeping it. Because it never enters `build_features.py`'s `BASE_COLUMNS`, it cannot silently re-appear downstream. Anyone attempting to re-add it as a feature would need to touch that file directly, and would need to justify the fairness implications explicitly at that point, not have them buried in a config flag elsewhere.
 
 ## A note on scope
 
-`AGE` remains in the model (both v1 and v2). Age is treated differently
-from sex/gender under most lending fairness frameworks — permitted
-with restrictions rather than prohibited outright — but that
-determination was not made here with actual legal guidance, only noted
-as a follow-up in `FAIRNESS.md`. It should not be read as a closed
-question.
+`AGE` remains in the model (both v1 and v2). Age is treated differently from sex/gender under most lending fairness frameworks, permitted with restrictions rather than prohibited outright, but that determination was not made here with actual legal guidance, only noted as a follow-up in `FAIRNESS.md`. It should not be read as a closed question.
 
 ---
 
-## Architecture — v1 (Taiwan, `main`)
+## Architecture, v1 (Taiwan, `main`)
 
 ```
 raw data
@@ -134,16 +67,16 @@ preprocess.py                cleaning: imputation, category correction
    ▼
 build_features.py            domain features: utilization, payment ratios,
    │                         delinquency history, trend, volatility
-   │                         (SEX excluded here — see FAIRNESS.md)
+   │                         (SEX excluded here, see FAIRNESS.md)
    ▼
 train_pipeline.py            stratified split → encode → scale → SMOTE
-   │                         (all fit on train only — no leakage)
+   │                         (all fit on train only, no leakage)
    ▼
 cross_validate_baseline.py   5-fold CV, stability check
 cross_validate_challenger.py 5-fold CV, same folds as baseline
    │
    ▼
-compare_baseline_vs_challenger.py    paired t-test — decides which model wins
+compare_baseline_vs_challenger.py    paired t-test, decides which model wins
    │
    ▼
 train_baseline.py            final model, persisted with its artifacts
@@ -151,7 +84,7 @@ train_baseline.py            final model, persisted with its artifacts
    ├──► generate_oof_predictions.py   out-of-fold probabilities (no leakage)
    ├──► optimize_threshold_v2.py      cost-based threshold, chosen from OOF only
    ├──► explain_model.py              SHAP (auto-detects Linear vs Tree explainer)
-   └──► fairness_check_sex.py         ablation test (legacy — SEX already excluded upstream)
+   └──► fairness_check_sex.py         ablation test (legacy, SEX already excluded upstream)
    │
    ▼
 config/model_config.json     single source of truth: active model,
@@ -160,43 +93,43 @@ config/model_config.json     single source of truth: active model,
 src/api (FastAPI)   ◄────────────────────  models/artifacts/*.joblib
    │
    ▼
-dashboard (Streamlit)        reads the same config — never hardcodes
+dashboard (Streamlit)        reads the same config, never hardcodes
                               which model is "active"
 ```
 
-## Architecture — v2 (Home Credit, `v2-home-credit`)
+## Architecture, v2 (Home Credit, `v2-home-credit`)
 
 ```
 5 raw Home Credit tables (data/raw/home_credit/)
    application_train.csv, bureau.csv, previous_application.csv,
    installments_payments.csv, credit_card_balance.csv
    │
-   ▼  (explored one table at a time — notebooks/02 through 06)
+   ▼  (explored one table at a time, notebooks/02 through 06)
 build_features_v2.py         aggregates each auxiliary table down to
    │                         client-level features validated during EDA:
    │                         HAS_*_HISTORY flags, EVER_OVERDUE, EVER_REFUSED,
    │                         PCT_INSTALLMENTS_LATE, CC_AVG_UTILIZATION, etc.
-   │                         (CODE_GENDER excluded here — see below)
+   │                         (CODE_GENDER excluded here, see below)
    ▼
 train_pipeline_v2.py         stratified split → encode → scale
-   │                         (no SMOTE — class_weight/scale_pos_weight
+   │                         (no SMOTE, class_weight/scale_pos_weight
    │                         instead, a lesson carried over from v1)
    ▼
 cross_validate_baseline_v2.py     5-fold CV, Logistic Regression
 cross_validate_challenger_v2.py   5-fold CV, XGBoost, same folds
    │
    ▼
-compare_baseline_vs_challenger_v2.py   paired t-test — XGBoost wins here
+compare_baseline_vs_challenger_v2.py   paired t-test, XGBoost wins here
    │                                   (unlike v1), p=0.0002 (AUC), p=0.0005 (KS)
    ▼
 train_baseline_v2.py / train_challenger_v2.py   final models, persisted
    │
-   ├──► fairness_check_gender_v2.py         CODE_GENDER ablation (+0.0018 AUC → excluded)
+   ├──► fairness_check_gender_v2.py         CODE_GENDER ablation (+0.0018 AUC, excluded)
    ├──► generate_oof_predictions_v2_xgb.py  out-of-fold probabilities (no leakage)
    ├──► optimize_threshold_v2_active.py     cost-based threshold, reads the ACTIVE
-   │                                        model from config — never hardcoded
+   │                                        model from config, never hardcoded
    ├──► explain_model_v2.py                 SHAP (auto-detects Linear vs Tree explainer)
-   ├──► ablation_check_ext_source_v2.py     EXT_SOURCE_1/2/3 ablation — the honesty check
+   ├──► ablation_check_ext_source_v2.py     EXT_SOURCE_1/2/3 ablation, the honesty check
    └──► check_ext_source_missingness.py     confirms no production-availability risk
    │
    ▼
@@ -208,15 +141,19 @@ src/api/main_v2.py (FastAPI)   ◄──────  models/artifacts/*.joblib,
    │                                    data/features/home_credit_features.csv
    │                                    (acts as a precomputed feature store)
    ▼
-dashboard/app_v2.py (Streamlit)   reads the same config — never hardcodes
+dashboard/app_v2.py (Streamlit)   reads the same config, never hardcodes
                                   which model is "active"
 ```
 
-Same discipline as v1 in both pipelines: every stage that fits
-something to data — the encoder, the scaler, the imputation medians —
-is fit exclusively on the training split. See the module-level
-docstring in each file under `src/` for the specific contract of that
-stage.
+Same discipline as v1 in both pipelines: every stage that fits something to data, the encoder, the scaler, the imputation medians, is fit exclusively on the training split. See the module-level docstring in each file under `src/` for the specific contract of that stage.
+
+## Monitoring: drift and continuous testing (both versions)
+
+Two things this project addresses beyond "the model works today":
+
+**Automated tests on every push.** `.github/workflows/tests.yml` runs the full pytest suite on every push and pull request to `main` and `v2-home-credit`. Tests that need locally-generated artifacts (trained models, raw datasets, all gitignored) are skipped cleanly rather than failing, thanks to `test/conftest.py`, since those files aren't committed to the repo (size, and in v2's case, Kaggle's redistribution terms). This validates feature-engineering logic, schema contracts, and fairness guards on every change, without needing Kaggle credentials or a multi-minute training run in CI.
+
+**Population Stability Index (PSI) for drift monitoring.** `check_data_drift.py` implements PSI, the standard credit-risk-industry technique for detecting when a scored population has shifted away from what the model was trained on, both per-feature and on the model's predicted-probability output. Building this surfaced a real methodological trap worth stating plainly: v1's `train_final.csv` is the *post-SMOTE* training set (`train_pipeline.py` saves `X_train_bal`, not the real unmodified split), so comparing it as a drift reference against real data produces spurious PSI values on any feature SMOTE touched (an ordinal variable like `PAY_0` showed PSI = 0.29, "significant drift," purely from SMOTE's linear interpolation creating thousands of fractional values that never existed). Confirmed by splitting genuinely real data (`test_final.csv`) into two halves and comparing them: PSI dropped to near zero everywhere. **Never use `train_final.csv` as the `--reference` for v1's drift checks; use `test_final.csv` instead.** v2 doesn't have this problem, since its pipeline deliberately avoids SMOTE in the first place.
 
 ## Project structure
 
@@ -253,16 +190,19 @@ test/             test_api_schema.py, test_build_features.py,
                   test_config.py, test_fairness_no_protected_attributes.py    (v1, 20 tests)
                   test_api_v2.py, test_build_features_v2.py,
                   test_config_v2.py, test_fairness_no_protected_attributes_v2.py  (v2, 26 tests)
-data/raw/home_credit/   5 raw Home Credit CSVs (gitignored — not versioned)
+                  conftest.py                               (shared: skips artifact-dependent tests cleanly in CI)
+.github/workflows/tests.yml   CI: runs the full test suite on every push/PR
+check_data_drift.py            PSI-based drift monitoring (shared, see caveat above)
+check_ext_source_missingness.py   standalone v2 sanity check
+data/raw/home_credit/   5 raw Home Credit CSVs (gitignored, not versioned)
 models/artifacts/ trained models, encoders, scalers, figures, reports (both versions)
 FAIRNESS.md       fairness finding and decision log (v1; v2's CODE_GENDER
                   finding lives in model_config_v2.json for now)
-check_ext_source_missingness.py   standalone v2 sanity check (project root)
 ```
 
 ---
 
-## Running it — v1
+## Running it, v1
 
 ### 1. Environment
 
@@ -273,12 +213,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-> **Important:** always run project scripts as modules
-> (`python -m src.models.train_baseline`), never by clicking a "Run"
-> button or invoking the file by direct path. This project's editable
-> install has, more than once, resolved imports incorrectly when run
-> that way — `-m` from the project root is the pattern that reliably
-> works.
+> **Important:** always run project scripts as modules (`python -m src.models.train_baseline`), never by clicking a "Run" button or invoking the file by direct path. This project's editable install has, more than once, resolved imports incorrectly when run that way; `-m` from the project root is the pattern that reliably works.
 
 ### 2. Rebuild the pipeline from raw data
 
@@ -315,13 +250,17 @@ streamlit run dashboard/app.py
 python -m pytest -v
 ```
 
+### 6. Drift check (use `test_final.csv` as reference, not `train_final.csv`, see Monitoring above)
+
+```bash
+python check_data_drift.py --reference data/features/test_final.csv --current <path to a new scoring batch> --model models/artifacts/logreg_baseline.joblib
+```
+
 ---
 
-## Running it — v2
+## Running it, v2
 
-> Checked out on the `v2-home-credit` branch. Requires the 5 raw Home
-> Credit CSVs in `data/raw/home_credit/` (downloaded separately from
-> Kaggle — see the competition's data page; not included in this repo).
+> Checked out on the `v2-home-credit` branch. Requires the 5 raw Home Credit CSVs in `data/raw/home_credit/` (downloaded separately from Kaggle, see the competition's data page; not included in this repo).
 
 ### 1. Rebuild the pipeline from raw data
 
@@ -341,17 +280,14 @@ python -m src.models.ablation_check_ext_source_v2
 python check_ext_source_missingness.py
 ```
 
-Each step reads the previous step's output and writes its own to
-`data/` or `models/artifacts/`; none of them mutate shared state, so
-the sequence can be re-run in full at any time.
+Each step reads the previous step's output and writes its own to `data/` or `models/artifacts/`; none of them mutate shared state, so the sequence can be re-run in full at any time.
 
 ### 2. Serve the model
 
 ```bash
 uvicorn src.api.main_v2:app --reload --port 8001
 ```
-Interactive docs at `http://127.0.0.1:8001/docs`. Port 8001, not 8000
-— so v1's API can run alongside it if needed.
+Interactive docs at `http://127.0.0.1:8001/docs`. Port 8001, not 8000, so v1's API can run alongside it if needed.
 
 ### 3. Dashboard
 
@@ -360,14 +296,7 @@ With the API running, in a second terminal:
 streamlit run dashboard/app_v2.py --server.port 8502
 ```
 
-> **Note:** v2 scores an *existing* client by `SK_ID_CURR`
-> (`GET /predict/{sk_id_curr}`), not a submitted form. Its behavioral
-> features (bureau history, installment lateness, credit card
-> utilization) are aggregates over 4 large relational tables that
-> can't be computed live from a request body — in a real system they'd
-> come from a feature store keyed by client ID, which is exactly what
-> `data/features/home_credit_features.csv` simulates here. See
-> `src/api/inference_v2.py`'s docstring for the full reasoning.
+> **Note:** v2 scores an *existing* client by `SK_ID_CURR` (`GET /predict/{sk_id_curr}`), not a submitted form. Its behavioral features (bureau history, installment lateness, credit card utilization) are aggregates over 4 large relational tables that can't be computed live from a request body; in a real system they'd come from a feature store keyed by client ID, which is exactly what `data/features/home_credit_features.csv` simulates here. See `src/api/inference_v2.py`'s docstring for the full reasoning.
 
 ### 4. Tests
 
@@ -375,74 +304,28 @@ streamlit run dashboard/app_v2.py --server.port 8502
 python -m pytest -v
 ```
 
+### 5. Drift check
+
+```bash
+python check_data_drift.py --reference data/features/train_final_v2.csv --current <path to a new scoring batch> --model models/artifacts/xgb_challenger_v2.joblib
+```
+
 ---
 
 ## Roadmap
 
-- [x] **v1** — inherit and re-validate the `credit-risk-engine` pipeline
-      end to end: fix inherited bugs (negative-value `log1p`, seaborn
-      deprecations, a stale editable install, a model artifact out of
-      sync with its own schema), re-decide the active model with a
-      proper statistical test, fix a threshold-selection leakage, and
-      ship a working API + dashboard.
-- [x] **v2 (exploration + modeling complete)** — migrated to the Home
-      Credit Default Risk dataset (bureau history, prior loans,
-      installment-level payment behavior, credit card balances across
-      5 relational tables). Work happened on a separate `v2-home-credit`
-      branch so `main` always reflects a working v1.
+- [x] **v1**: inherit and re-validate the `credit-risk-engine` pipeline end to end. Fix inherited bugs (negative-value `log1p`, seaborn deprecations, a stale editable install, a model artifact out of sync with its own schema), re-decide the active model with a proper statistical test, fix a threshold-selection leakage, and ship a working API + dashboard.
+- [x] **v2 (exploration + modeling complete)**: migrated to the Home Credit Default Risk dataset (bureau history, prior loans, installment-level payment behavior, credit card balances across 5 relational tables). Work happened on a separate `v2-home-credit` branch so `main` always reflects a working v1.
 
       **v2 findings, in brief:**
-      - EDA across all 5 tables found genuine behavioral signal with
-        clear dose-response patterns: `PCT_INSTALLMENTS_LATE` (+66%
-        relative default rate from lowest to highest tercile) and
-        `CC_AVG_UTILIZATION` (+183% relative, the strongest signal found
-        purely from this project's own engineered features).
-      - A Logistic Regression baseline (v2) scored lower than v1's
-        (AUC 0.7551 vs. 0.7664, 5-fold CV) despite the richer data —
-        traced to Home Credit's more extreme class imbalance (8% vs.
-        22% default rate in v1's dataset), not to wasted feature signal
-        (confirmed via coefficient inspection: the `HAS_*_HISTORY`
-        flags do carry real, appropriately-signed weight).
-      - An XGBoost challenger *did* show a statistically significant
-        improvement over the v2 baseline this time (unlike v1, where the
-        same test led to rejecting XGBoost) — paired t-test AUC +0.0084
-        (p=0.0002), KS +0.0144 (p=0.0005), winning in 5/5 folds. Promoted
-        to v2 production per `config/model_config_v2.json`.
-      - `CODE_GENDER` was audited the same way `SEX` was in v1
-        (evidence-first, not excluded by default) and removed after an
-        ablation showed negligible performance cost (+0.0018 AUC,
-        confirmed via a full 5-fold CV re-run after removal).
-      - **Honesty check that matters most**: SHAP showed `EXT_SOURCE_1/2/3`
-        — precomputed external scores present in the raw data, not
-        features this project engineered — dominating feature
-        importance by a wide margin, both globally and on individual
-        predictions served through the live API. An ablation confirmed
-        they alone are worth +0.0507 AUC; without them, v2 (0.7144)
-        falls clearly *below* v1 (0.7664, -0.0520). A follow-up
-        availability check found no production-risk case for removing
-        them anyway (`EXT_SOURCE_2` missing only 0.2% of the time; only
-        0.06% of clients lack all three, with no meaningful
-        default-rate difference), so they remain in the production
-        model — but the honest accounting is that the "v2 nearly
-        closes the gap with v1" headline number depends mostly on
-        precomputed external scores, not on this project's own
-        multi-table behavioral feature engineering. That engineering
-        is real and individually validated (see the dose-response
-        findings above), but it is a secondary contributor to the
-        model's overall performance, not the primary one. Full
-        accounting in `config/model_config_v2.json`'s `promotion_notes`.
-- [x] **v2 (deployment parity)** — API + dashboard for the v2 model,
-      matching v1's. Scores existing clients by `SK_ID_CURR` (looked up
-      from a precomputed feature store) rather than accepting raw form
-      fields, since v2's behavioral features are aggregates over 4
-      large relational tables that can't be computed live per request
-      — see `src/api/inference_v2.py`'s docstring for the full
-      reasoning. Covered by `test/test_api_v2.py`, run against a real
-      FastAPI `TestClient`.
+      - EDA across all 5 tables found genuine behavioral signal with clear dose-response patterns: `PCT_INSTALLMENTS_LATE` (+66% relative default rate from lowest to highest tercile) and `CC_AVG_UTILIZATION` (+183% relative, the strongest signal found purely from this project's own engineered features).
+      - A Logistic Regression baseline (v2) scored lower than v1's (AUC 0.7551 vs. 0.7664, 5-fold CV) despite the richer data, traced to Home Credit's more extreme class imbalance (8% vs. 22% default rate in v1's dataset), not to wasted feature signal (confirmed via coefficient inspection: the `HAS_*_HISTORY` flags do carry real, appropriately-signed weight).
+      - An XGBoost challenger *did* show a statistically significant improvement over the v2 baseline this time (unlike v1, where the same test led to rejecting XGBoost): paired t-test AUC +0.0084 (p=0.0002), KS +0.0144 (p=0.0005), winning in 5/5 folds. Promoted to v2 production per `config/model_config_v2.json`.
+      - `CODE_GENDER` was audited the same way `SEX` was in v1 (evidence-first, not excluded by default) and removed after an ablation showed negligible performance cost (+0.0018 AUC, confirmed via a full 5-fold CV re-run after removal).
+      - **Honesty check that matters most**: SHAP showed `EXT_SOURCE_1/2/3`, precomputed external scores present in the raw data, not features this project engineered, dominating feature importance by a wide margin, both globally and on individual predictions served through the live API. An ablation confirmed they alone are worth +0.0507 AUC; without them, v2 (0.7144) falls clearly *below* v1 (0.7664, -0.0520). A follow-up availability check found no production-risk case for removing them anyway (`EXT_SOURCE_2` missing only 0.2% of the time; only 0.06% of clients lack all three, with no meaningful default-rate difference), so they remain in the production model. The honest accounting is that the "v2 nearly closes the gap with v1" headline number depends mostly on precomputed external scores, not on this project's own multi-table behavioral feature engineering. That engineering is real and individually validated (see the dose-response findings above), but it is a secondary contributor to the model's overall performance, not the primary one. Full accounting in `config/model_config_v2.json`'s `promotion_notes`.
+- [x] **v2 (deployment parity)**: API + dashboard for the v2 model, matching v1's. Scores existing clients by `SK_ID_CURR` (looked up from a precomputed feature store) rather than accepting raw form fields, since v2's behavioral features are aggregates over 4 large relational tables that can't be computed live per request. See `src/api/inference_v2.py`'s docstring for the full reasoning. Covered by `test/test_api_v2.py`, run against a real FastAPI `TestClient`.
+- [x] **Engineering maturity**: CI (GitHub Actions, `.github/workflows/tests.yml`) running the full test suite on every push, and PSI-based drift monitoring (`check_data_drift.py`) for both versions. Getting CI green surfaced five real, unglamorous problems worth naming since they're exactly what breaks a "works on my machine" project: a Windows-only dependency (`pywin32`) that doesn't exist on Linux runners, PowerShell silently continuing past a failed command in a multi-line script (which hid a real install failure behind a green checkmark), `pytest` never actually being listed in `requirements.txt`, a genuine dependency conflict (`packaging==26.0` pinned against `streamlit`'s `packaging<26` constraint) that only surfaces when resolving the full dependency tree from scratch, and a commit that was made locally but never pushed. The drift-monitoring work surfaced a methodological one of its own: v1's `train_final.csv` is SMOTE-augmented, not real data, so it must never be used as the drift reference (see Monitoring above).
 
 ---
 
-*Built on a pipeline that had been paused for months, resumed and
-re-audited stage by stage — which is, if anything, a more faithful
-account of how real projects get built than a repository that only
-shows the final state.*
+*Built on a pipeline that had been paused for months, resumed and re-audited stage by stage, which is, if anything, a more faithful account of how real projects get built than a repository that only shows the final state.*
